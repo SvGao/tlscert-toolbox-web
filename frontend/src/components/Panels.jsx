@@ -199,6 +199,103 @@ export function ChainCheck() {
 }
 async function postJsonChain(fd) { return postForm('/api/chain/check', fd); }
 
+/* ---------------- Merge cert + chain (no private key) ---------------- */
+export function ChainMerge() {
+  const p = usePanel();
+  const [includeRoot, setIncludeRoot] = useState(false);
+  const submit = (e) => {
+    e.preventDefault();
+    p.run(async () => {
+      const fd = new FormData();
+      fd.append('cert', p.files.cert);
+      if (p.files.chain) fd.append('chain', p.files.chain);
+      fd.append('includeRoot', String(includeRoot));
+      return postForm('/api/chain/merge', fd);
+    });
+  };
+  const r = p.result;
+  return (
+    <form onSubmit={submit}>
+      <p className="desc">Combine a certificate with its intermediate(s) into a single <code>fullchain.pem</code>, ordered leaf → root. No private key needed. Inputs may be PEM or DER.</p>
+      <FileInput label="Certificate (leaf)" name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required />
+      <FileInput label="Intermediate / chain" name="chain" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles}
+        hint="One or more CA certificates (a bundle is fine)." />
+      <label className="check">
+        <input type="checkbox" checked={includeRoot} onChange={(e) => setIncludeRoot(e.target.checked)} />
+        Include the self-signed root (usually omitted for web servers)
+      </label>
+      <SubmitButton busy={p.busy}>Merge into fullchain.pem</SubmitButton>
+      <ErrorBox error={p.error} />
+      {r && (
+        <>
+          <div className="chain-report">
+            <div className="chain-status ok">✔ Merged {r.count} certificate{r.count > 1 ? 's' : ''} (leaf → root order)</div>
+            <ol className="chain-list">
+              {r.order.map((c, i) => (
+                <li key={i}>
+                  <div className="c-subj">{c.subject}{c.selfSigned ? '  · root' : ''}</div>
+                  <div className="c-meta">Issuer: {c.issuer}</div>
+                </li>
+              ))}
+            </ol>
+            {r.warnings?.length > 0 && (
+              <div className="issues">{r.warnings.map((x, i) => <div key={i} className="issue">⚠ {x}</div>)}</div>
+            )}
+          </div>
+          <ResultFiles files={r.files} />
+          <Log lines={r.log} />
+        </>
+      )}
+    </form>
+  );
+}
+
+/* ---------------- URL chain check ---------------- */
+export function UrlCheck() {
+  const p = usePanel();
+  const [url, setUrl] = useState('');
+  const submit = (e) => {
+    e.preventDefault();
+    p.run(async () => postJson('/api/chain/url', { url }));
+  };
+  const r = p.result;
+  return (
+    <form onSubmit={submit}>
+      <p className="desc">Connect to a live server, retrieve the certificate chain it presents, and check whether it is complete and trusted.</p>
+      <TextField label="URL or host" value={url} onChange={setUrl}
+        placeholder="example.com  ·  https://example.com  ·  host:8443" required />
+      <SubmitButton busy={p.busy}>Check server</SubmitButton>
+      <ErrorBox error={p.error} />
+      {r && (
+        <div className="chain-report">
+          <div className={'chain-status ' + (r.complete ? 'ok' : 'bad')}>
+            {r.complete
+              ? `✔ ${r.host}:${r.port} — chain is complete and trusted`
+              : `✘ ${r.host}:${r.port} — chain problem detected`}
+          </div>
+          <p className="note">
+            {r.protocol && <>Protocol: <b>{r.protocol}</b>&nbsp;&nbsp;</>}
+            {r.cipher && <>Cipher: <b>{r.cipher}</b>&nbsp;&nbsp;</>}
+            {r.verifyCode !== null && <>openssl verify: <b>{r.verifyCode} ({r.verifyText})</b></>}
+          </p>
+          <ol className="chain-list">
+            {r.chain.map((c, i) => (
+              <li key={i}>
+                <div className="c-subj">{c.subject}{c.selfSigned ? '  · self-signed (root)' : ''}</div>
+                <div className="c-meta">Issuer: {c.issuer}</div>
+                <div className="c-meta">Valid: {c.notBefore} → {c.notAfter}</div>
+              </li>
+            ))}
+          </ol>
+          {r.issues?.length > 0 && (
+            <div className="issues">{r.issues.map((x, i) => <div key={i} className="issue">⚠ {x}</div>)}</div>
+          )}
+        </div>
+      )}
+    </form>
+  );
+}
+
 /* ---------------- Inspect certificate ---------------- */
 export function Inspect() {
   const p = usePanel();

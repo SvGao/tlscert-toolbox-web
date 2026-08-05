@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { execFile } from 'child_process';
 import { openssl } from './openssl.js';
 
 const PEM_MARKER = '-----BEGIN';
@@ -267,6 +268,214 @@ export async function analyzeChain(dir, { leafBuf, chainBuf }) {
       .map((c) => ({ subject: c.subject, issuer: c.issuer })),
     issues,
     verify,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Merge certificate + chain into a single bundle (no private key)     */
+/* ------------------------------------------------------------------ */
+
+// Return the PEM text of every certificate in a buffer, converting from
+// DER first if the buffer is not already PEM.
+async function normalizeToPems(dir, buf, tag) {
+  if (isPem(buf)) return splitPems(buf.toString('latin1'));
+  // Assume single DER certificate; convert to PEM.
+  const inFile = write(dir, `${tag}.der`, buf);
+  const { stdout } = await openssl(['x509', '-inform', 'DER', '-in', inFile, '-outform', 'PEM']);
+  return splitPems(stdout);
+}
+
+/**
+ * Concatenate a leaf certificate with its intermediate(s) into one
+ * PEM bundle, ordered leaf -> intermediate -> root. No private key involved.
+ * By default the self-signed root is dropped (standard web-server "fullchain").
+ */
+export async function mergeChain(dir, { leafBuf, chainBuf, includeRoot = false }) {
+  const leafPems = await normalizeToPems(dir, leafBuf, 'leaf');
+  const chainPems = chainBuf && chainBuf.length ? await normalizeToPems(dir, chainBuf, 'chain') : [];
+  if (!leafPems.length) throw new Error('No certificate found in the certificate file.');
+
+  const pool = [...leafPems, ...chainPems];
+  const metas = [];
+  for (let i = 0; i < pool.length; i++) metas.push(await certMeta(dir, pool[i], i));
+
+  const bySubjectHash = new Map();
+  for (const c of metas) if (!bySubjectHash.has(c.subjectHash)) bySubjectHash.set(c.subjectHash, c);
+
+  // Order leaf -> root by following issuer links.
+  const ordered = [];
+  const seen = new Set();
+  const warnings = [];
+  let current = metas[0];
+  while (current && !seen.has(current.subjectHash)) {
+    ordered.push(current);
+    seen.add(current.subjectHash);
+    if (current.selfSigned) break;
+    const next = bySubjectHash.get(current.issuerHash);
+    if (!next) {
+      warnings.push(
+        `Could not find the issuer of "${current.subject}" among the supplied certificates — the bundle may be missing an intermediate.`
+      );
+      break;
+    }
+    current = next;
+  }
+
+  // If some supplied certs were not part of the ordered path, fall back to
+  // the given order (leaf file first, then chain file) to avoid dropping certs.
+  let finalMetas;
+  if (ordered.length === metas.length) {
+    finalMetas = ordered;
+  } else {
+    warnings.push('Certificates could not be fully auto-ordered; kept them in the supplied order.');
+    finalMetas = metas;
+  }
+
+  if (!includeRoot) {
+    const withoutRoot = finalMetas.filter((c) => !c.selfSigned);
+    // Only drop the root if doing so leaves at least the leaf.
+    if (withoutRoot.length) finalMetas = withoutRoot;
+  }
+
+  const bundle = finalMetas.map((c) => fs.readFileSync(c.path, 'utf8').trim()).join('\n') + '\n';
+  const out = write(dir, 'fullchain.pem', bundle);
+
+  return {
+    produced: [{ path: out, name: 'fullchain.pem' }],
+    order: finalMetas.map((c) => ({ subject: c.subject, issuer: c.issuer, selfSigned: c.selfSigned })),
+    count: finalMetas.length,
+    warnings,
+    log: ['cat cert.pem intermediate.crt > fullchain.pem  (ordered leaf → root)'],
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Fetch and analyze the TLS certificate chain served by a URL         */
+/* ------------------------------------------------------------------ */
+
+// Common CA bundle locations; used so `openssl verify` can judge trust.
+const CA_BUNDLES = [
+  '/etc/ssl/certs/ca-certificates.crt',
+  '/etc/pki/tls/certs/ca-bundle.crt',
+  '/etc/ssl/cert.pem',
+];
+function findCaBundle() {
+  for (const p of CA_BUNDLES) {
+    try { if (fs.statSync(p).isFile()) return p; } catch { /* ignore */ }
+  }
+  return null;
+}
+
+// Parse "example.com", "https://example.com/path", "host:8443" -> {host, port}.
+export function parseHostPort(input) {
+  let s = String(input || '').trim();
+  if (!s) throw new Error('Please enter a URL or host name.');
+  s = s.replace(/^[a-z]+:\/\//i, '');       // strip scheme
+  s = s.replace(/\/.*$/, '');                // strip path
+  s = s.replace(/^[^@]*@/, '');              // strip any userinfo
+  let host = s, port = 443;
+  const m = s.match(/^\[([^\]]+)\]:(\d+)$/); // [ipv6]:port
+  if (m) { host = m[1]; port = Number(m[2]); }
+  else if (s.includes(':') && !s.includes('::')) {
+    const parts = s.split(':');
+    host = parts[0];
+    port = Number(parts[1]) || 443;
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(host) && !host.includes(':')) {
+    throw new Error('Invalid host name.');
+  }
+  if (!(port > 0 && port < 65536)) throw new Error('Invalid port.');
+  return { host, port };
+}
+
+// Run openssl s_client to capture exactly the certificates the server sends.
+async function fetchServerChain(host, port) {
+  const caFile = findCaBundle();
+  const args = [
+    's_client', '-connect', `${host}:${port}`, '-servername', host, '-showcerts',
+  ];
+  if (caFile) args.push('-CAfile', caFile);
+
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      process.env.OPENSSL_BIN || 'openssl',
+      args,
+      { timeout: 12000, maxBuffer: 8 * 1024 * 1024, killSignal: 'SIGKILL' },
+      (err, stdout, stderr) => {
+        const out = (stdout || '') + '\n' + (stderr || '');
+        // s_client exits non-zero on verify failures, but still prints the chain.
+        if (!/BEGIN CERTIFICATE/.test(out)) {
+          const msg = (stderr || err?.message || '').split('\n')[0] || 'Could not retrieve certificate.';
+          return reject(new Error(`Could not connect to ${host}:${port} — ${msg}`));
+        }
+        resolve(out);
+      }
+    );
+    // Close the connection right after the handshake.
+    child.stdin.end('Q\n');
+  });
+}
+
+export async function analyzeUrlChain(dir, { host, port }) {
+  const raw = await fetchServerChain(host, port);
+  const pems = splitPems(raw);
+  if (!pems.length) throw new Error('The server did not present any certificate.');
+
+  const metas = [];
+  for (let i = 0; i < pems.length; i++) metas.push(await certMeta(dir, pems[i], i));
+
+  // Verify verdict as reported by openssl (authoritative when a CA bundle exists).
+  const codeMatch = raw.match(/Verify return code:\s*(\d+)\s*\(([^)]*)\)/i);
+  const verifyCode = codeMatch ? Number(codeMatch[1]) : null;
+  const verifyText = codeMatch ? codeMatch[2] : '';
+  const protoMatch = raw.match(/Protocol\s*:\s*(\S+)/);
+  const cipherMatch = raw.match(/Cipher\s*:\s*(\S+)/);
+
+  // Is the sent set a contiguous leaf -> up path?
+  const bySubjectHash = new Map();
+  for (const c of metas) if (!bySubjectHash.has(c.subjectHash)) bySubjectHash.set(c.subjectHash, c);
+  let contiguous = true;
+  for (let i = 0; i < metas.length - 1; i++) {
+    if (metas[i].selfSigned) break;
+    const next = bySubjectHash.get(metas[i].issuerHash);
+    if (!next || next.idx !== metas[i + 1].idx) { contiguous = false; break; }
+  }
+
+  const issues = [];
+  let complete;
+  if (verifyCode === 0) {
+    complete = true;
+  } else if (verifyCode === 20 || verifyCode === 21) {
+    complete = false;
+    issues.push('Server is missing an intermediate certificate — clients that do not fetch it themselves will fail to verify this site.');
+  } else if (verifyCode !== null) {
+    complete = false;
+    issues.push(`OpenSSL verification failed: ${verifyText} (code ${verifyCode}).`);
+  } else {
+    // No CA bundle available to judge trust; fall back to structural check.
+    complete = contiguous;
+    issues.push('No system CA bundle available to confirm trust; showing structural analysis only.');
+  }
+  if (!contiguous) {
+    issues.push('The certificates were not sent in a proper leaf → root order (or a link is missing).');
+  }
+
+  return {
+    host, port,
+    complete,
+    verifyCode,
+    verifyText,
+    protocol: protoMatch ? protoMatch[1] : null,
+    cipher: cipherMatch ? cipherMatch[1] : null,
+    count: metas.length,
+    chain: metas.map((c) => ({
+      subject: c.subject,
+      issuer: c.issuer,
+      notBefore: c.notBefore,
+      notAfter: c.notAfter,
+      selfSigned: c.selfSigned,
+    })),
+    issues,
   };
 }
 

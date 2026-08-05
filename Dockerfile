@@ -8,8 +8,9 @@ RUN npm run build
 
 # ---------- stage 2: backend + static UI (single image) ----------
 FROM node:20-alpine
-# openssl 3 (with -legacy support) is required for the certificate operations.
-RUN apk add --no-cache openssl
+# openssl 3 (with -legacy support) runs the certificate operations;
+# ca-certificates provides the trust store used by the URL chain check.
+RUN apk add --no-cache openssl ca-certificates && update-ca-certificates
 
 WORKDIR /app
 COPY backend/package.json ./

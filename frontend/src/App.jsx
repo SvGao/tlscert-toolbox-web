@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import {
-  PfxExtract, PfxCreate, Convert, RemoveKeyPass, ChainCheck, Inspect, CsrGenerate,
+  PfxExtract, PfxCreate, Convert, RemoveKeyPass, ChainCheck, ChainMerge, UrlCheck, Inspect, CsrGenerate,
 } from './components/Panels.jsx';
 
 const TABS = [
   { id: 'pfx-extract', label: 'PFX → Key + Cert', icon: '🔓', Comp: PfxExtract },
   { id: 'pfx-create', label: 'Key + Cert → PFX', icon: '📦', Comp: PfxCreate },
+  { id: 'chain-merge', label: 'Merge cert + chain', icon: '🧩', Comp: ChainMerge },
   { id: 'convert', label: 'PEM ⇄ DER', icon: '🔁', Comp: Convert },
-  { id: 'chain', label: 'Chain check', icon: '🔗', Comp: ChainCheck },
+  { id: 'chain', label: 'Chain check (file)', icon: '🔗', Comp: ChainCheck },
+  { id: 'url', label: 'Chain check (URL)', icon: '🌐', Comp: UrlCheck },
   { id: 'csr', label: 'Generate CSR', icon: '📝', Comp: CsrGenerate },
   { id: 'remove-pass', label: 'Remove key passphrase', icon: '🔑', Comp: RemoveKeyPass },
   { id: 'inspect', label: 'Inspect cert', icon: '🔍', Comp: Inspect },

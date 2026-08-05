@@ -113,6 +113,34 @@ router.post(
   })
 );
 
+/* ---- Merge certificate + chain into one bundle (no private key) ---- */
+router.post(
+  '/chain/merge',
+  upload.fields([{ name: 'cert', maxCount: 1 }, { name: 'chain', maxCount: 1 }]),
+  withWork(async (req, res, dir) => {
+    const cert = req.files?.cert?.[0];
+    const chain = req.files?.chain?.[0];
+    if (!cert) throw new Error('Please upload the certificate (leaf) file.');
+    const { produced, order, count, warnings, log } = await ops.mergeChain(dir, {
+      leafBuf: cert.buffer,
+      chainBuf: chain?.buffer,
+      includeRoot: req.body.includeRoot === 'true',
+    });
+    res.json({ files: publish(produced), order, count, warnings, log });
+  })
+);
+
+/* ---- Fetch and analyze a live server's TLS chain by URL ---- */
+router.post(
+  '/chain/url',
+  express.json(),
+  withWork(async (req, res, dir) => {
+    const { host, port } = ops.parseHostPort(req.body?.url);
+    const result = await ops.analyzeUrlChain(dir, { host, port });
+    res.json(result);
+  })
+);
+
 /* ---- Inspect / decode a certificate ---- */
 router.post(
   '/inspect',
