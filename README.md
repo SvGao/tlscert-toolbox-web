@@ -26,39 +26,71 @@ A self-hosted, Dockerized web app for common X.509 / OpenSSL certificate tasks. 
 
 ## Run it
 
-### Option A — pull the prebuilt image (recommended)
-
-Every push to `main` auto-builds and publishes a multi-arch image to GitHub Container Registry via GitHub Actions. Just pull and run:
+There are two sources for the image: **pull the prebuilt one from GHCR**, or **build it yourself from source** after a `git pull` (no waiting for GitHub Actions). A helper script, [`ctl.sh`](ctl.sh), wraps both. After open http://localhost:8088.
 
 ```bash
-docker pull ghcr.io/svgao/tlscert-toolbox-web:latest
-
-docker run -d --name cert-toolbox -p 8088:8080 \
-  --tmpfs /tmp/cert-toolbox \
-  ghcr.io/svgao/tlscert-toolbox-web:latest
+chmod +x ctl.sh
 ```
 
-Then open http://localhost:8088
+### Quick reference
 
-> If the package is private, log in first:
+| Action | From Docker registry (GHCR) | From GitHub (build locally) |
+|--------|------------------------------|------------------------------|
+| **Create** | `./ctl.sh pull-new` | `./ctl.sh build-new` |
+| **Update** | `./ctl.sh pull-update` | `./ctl.sh build-update` |
+| **Delete** | `./ctl.sh delete` | `./ctl.sh delete` |
+
+Other commands: `./ctl.sh logs` · `status` · `restart` · `purge` (removes container **and** images). Override defaults with env vars, e.g. `PORT=9000 ./ctl.sh build-new`.
+
+### What each does (equivalent manual commands)
+
+**A. From the Docker registry** — pull the image GitHub Actions published:
+
+```bash
+# create
+docker pull ghcr.io/svgao/tlscert-toolbox-web:latest
+docker run -d --name cert-toolbox -p 8088:8080 --tmpfs /tmp/cert-toolbox \
+  --restart unless-stopped ghcr.io/svgao/tlscert-toolbox-web:latest
+
+# update (re-pull + recreate)
+docker pull ghcr.io/svgao/tlscert-toolbox-web:latest
+docker rm -f cert-toolbox
+docker run -d --name cert-toolbox -p 8088:8080 --tmpfs /tmp/cert-toolbox \
+  --restart unless-stopped ghcr.io/svgao/tlscert-toolbox-web:latest
+
+# delete
+docker rm -f cert-toolbox
+```
+
+> If the GHCR package is private, log in first (PAT needs `read:packages`); or make the package public in the repo's Packages settings:
 > ```bash
 > echo <YOUR_GITHUB_PAT> | docker login ghcr.io -u SvGao --password-stdin
 > ```
-> (PAT needs the `read:packages` scope. Make the package public in the repo's Packages settings to skip this.)
 
-### Option B — build from source
-
-```bash
-git clone git@github.com:SvGao/tlscert-toolbox-web.git
-cd tlscert-toolbox-web
-docker compose up --build
-```
-
-Or plain Docker without compose:
+**B. From GitHub** — pull the latest code and build the image yourself:
 
 ```bash
-docker build -t cert-toolbox . && docker run --rm -p 8088:8080 cert-toolbox
+# first time: clone
+git clone git@github.com:SvGao/tlscert-toolbox-web.git && cd tlscert-toolbox-web
+
+# create
+git pull --ff-only
+docker build -t cert-toolbox:local .
+docker run -d --name cert-toolbox -p 8088:8080 --tmpfs /tmp/cert-toolbox \
+  --restart unless-stopped cert-toolbox:local
+
+# update (pull new code + rebuild + recreate)
+git pull --ff-only
+docker build -t cert-toolbox:local .
+docker rm -f cert-toolbox
+docker run -d --name cert-toolbox -p 8088:8080 --tmpfs /tmp/cert-toolbox \
+  --restart unless-stopped cert-toolbox:local
+
+# delete
+docker rm -f cert-toolbox
 ```
+
+Prefer compose for the build path? `docker compose up -d --build` (build) and `docker compose down` (delete) also work.
 
 ## Configuration
 
@@ -72,7 +104,7 @@ docker build -t cert-toolbox . && docker run --rm -p 8088:8080 cert-toolbox
 
 - Passphrases are passed to OpenSSL via environment variables (`env:VAR`), never on the command line or argument list.
 - OpenSSL is invoked with an argument array (no shell), so uploaded filenames/values cannot inject shell commands.
-- Upload size is capped (10 MB backend / 15 MB nginx).
+- Upload size is capped at 10 MB per file.
 - This tool decrypts and handles private keys. Run it on a trusted host; prefer HTTPS in front (e.g. a TLS-terminating reverse proxy) for any non-local use.
 
 ## Local development
