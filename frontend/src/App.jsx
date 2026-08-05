@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   PfxExtract, PfxCreate, Convert, RemoveKeyPass, ChainCheck, ChainMerge, UrlCheck, Inspect, CsrGenerate,
 } from './components/Panels.jsx';
+import KnowledgeBase from './components/KnowledgeBase.jsx';
 
 const TABS = [
   { id: 'pfx-extract', label: 'PFX → Key + Cert', icon: '🔓', Comp: PfxExtract },
@@ -46,6 +47,8 @@ export default function App() {
       <main className="panel">
         <Active />
       </main>
+
+      <KnowledgeBase />
 
       <footer>
         <span className="privacy">🛡 Files live in a temp directory only. Download links self-destruct after one use or 1 hour.</span>
