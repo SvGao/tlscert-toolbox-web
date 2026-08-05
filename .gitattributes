@@ -1,0 +1,4 @@
+# Shell scripts must stay LF or they break on Linux (bad interpreter).
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
