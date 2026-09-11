@@ -4,6 +4,7 @@ import {
   Actions, ChainSpine, Checkbox, ErrorBox, FileInput, Issues, Log, OutHead,
   Plate, ResultFiles, SelectField, TextField, Verdict,
 } from './ui.jsx';
+import { useT } from '../i18n.jsx';
 
 // The chain field takes several files: intermediates and the root are often
 // delivered separately. Each is appended under the same field name.
@@ -36,6 +37,7 @@ function usePanel() {
 /* ------------------------------------------------------------------ */
 
 export function PfxExtract() {
+  const t = useT();
   const p = usePanel();
   const [password, setPassword] = useState('');
   const [strip, setStrip] = useState(true);
@@ -53,16 +55,15 @@ export function PfxExtract() {
 
   return (
     <form className="form" onSubmit={submit}>
-      <FileInput label="PKCS#12 bundle" name="pfx" accept=".pfx,.p12" files={p.files} setFiles={p.setFiles} required
-        hint="A .pfx or .p12 holding the certificate and its private key." />
-      <TextField label="Bundle password" type="password" value={password} onChange={setPassword}
-        hint="Leave empty if the bundle has no password." />
+      <FileInput label={t('p.extract.file')} name="pfx" accept=".pfx,.p12" files={p.files} setFiles={p.setFiles} required
+        hint={t('p.extract.fileHint')} />
+      <TextField label={t('p.extract.pw')} type="password" value={password} onChange={setPassword}
+        hint={t('p.extract.pwHint')} />
       <Checkbox checked={strip} onChange={setStrip}>
-        Decrypt the private key too, so nginx and Apache can load it without a passphrase prompt. Written as{' '}
-        <code>server.key</code>.
+        {t('p.extract.strip')} <code>server.key</code>.
       </Checkbox>
-      <Actions busy={p.busy} disabled={!p.files.pfx} need="a PKCS#12 bundle">Extract</Actions>
-      <ErrorBox error={p.error} fix="Wrong password is the usual cause. Bundles written by older tools may also need OpenSSL's legacy provider, which this tool retries with automatically." />
+      <Actions busy={p.busy} disabled={!p.files.pfx} need={t('p.extract.need')}>{t('p.extract.go')}</Actions>
+      <ErrorBox error={p.error} fix={t('p.extract.fix')} />
       <ResultFiles files={p.result?.files} />
       <Log lines={p.result?.log} />
     </form>
@@ -74,6 +75,7 @@ export function PfxExtract() {
 /* ------------------------------------------------------------------ */
 
 export function PfxCreate() {
+  const t = useT();
   const p = usePanel();
   const [exportPassword, setExportPassword] = useState('');
   const [keyPassword, setKeyPassword] = useState('');
@@ -95,18 +97,18 @@ export function PfxCreate() {
 
   return (
     <form className="form" onSubmit={submit}>
-      <FileInput label="Private key" name="key" accept=".key,.pem" files={p.files} setFiles={p.setFiles} required />
-      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} required />
-      <FileInput label="Intermediates and root" name="chain" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} multiple
-        hint="Add the intermediate and the root as separate files, or one bundle holding both. Include them so the importing server presents a complete chain." />
-      <TextField label="Password to protect the new bundle" type="password" value={exportPassword} onChange={setExportPassword} />
-      <TextField label="Password on the private key" type="password" value={keyPassword} onChange={setKeyPassword}
-        hint="Only needed if the key you uploaded is encrypted." />
+      <FileInput label={t('f.key')} name="key" accept=".key,.pem" files={p.files} setFiles={p.setFiles} required />
+      <FileInput label={t('f.cert')} name="cert" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} required />
+      <FileInput label={t('f.chain')} name="chain" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} multiple
+        hint={t('p.create.chainHint')} />
+      <TextField label={t('p.create.exportPw')} type="password" value={exportPassword} onChange={setExportPassword} />
+      <TextField label={t('p.create.keyPw')} type="password" value={keyPassword} onChange={setKeyPassword}
+        hint={t('p.create.keyPwHint')} />
       <Checkbox checked={legacy} onChange={setLegacy}>
-        Write with legacy algorithms, for Windows and IIS versions that reject OpenSSL 3 defaults
+        {t('p.create.legacy')}
       </Checkbox>
-      <Actions busy={p.busy} disabled={!p.files.key || !p.files.cert} need="a private key and a certificate">Create bundle</Actions>
-      <ErrorBox error={p.error} fix="If OpenSSL reports a key and certificate mismatch, the two files belong to different certificates." />
+      <Actions busy={p.busy} disabled={!p.files.key || !p.files.cert} need={t('p.create.need')}>{t('p.create.go')}</Actions>
+      <ErrorBox error={p.error} fix={t('p.create.fix')} />
       {p.result?.warnings?.length > 0 && (
         <section className="out">
           <Issues items={p.result.warnings} />
@@ -123,6 +125,7 @@ export function PfxCreate() {
 /* ------------------------------------------------------------------ */
 
 export function ChainMerge() {
+  const t = useT();
   const p = usePanel();
   const [includeRoot, setIncludeRoot] = useState(false);
 
@@ -140,21 +143,21 @@ export function ChainMerge() {
   const r = p.result;
   return (
     <form className="form" onSubmit={submit}>
-      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required
-        hint="The leaf certificate, the one issued for your hostname. PEM or DER." />
-      <FileInput label="Intermediates and root" name="chain" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} multiple
-        hint="Add the intermediate and the root as separate files, or one bundle holding both. Order does not matter, and PEM and DER can be mixed." />
+      <FileInput label={t('f.cert')} name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required
+        hint={t('p.merge.certHint')} />
+      <FileInput label={t('f.chain')} name="chain" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} multiple
+        hint={t('p.merge.chainHint')} />
       <Checkbox checked={includeRoot} onChange={setIncludeRoot}>
-        Keep the self-signed root in the output. Web servers normally leave it out, since clients already trust it.
+        {t('p.merge.includeRoot')}
       </Checkbox>
-      <Actions busy={p.busy} disabled={!p.files.cert} need="a certificate">Merge into fullchain.pem</Actions>
+      <Actions busy={p.busy} disabled={!p.files.cert} need={t('p.merge.need')}>{t('p.merge.go')}</Actions>
       <ErrorBox error={p.error} />
 
       {r && (
         <>
           <section className="out">
-            <Verdict ok sub={`${r.count} certificate${r.count > 1 ? 's' : ''}, ordered leaf to root`}>
-              Merged
+            <Verdict ok sub={r.count > 1 ? t('p.merge.doneSub', { n: r.count }) : t('p.merge.doneSub1')}>
+              {t('p.merge.done')}
             </Verdict>
             <ChainSpine chain={r.order} showValidity={false} />
             <Issues items={r.warnings} />
@@ -172,6 +175,7 @@ export function ChainMerge() {
 /* ------------------------------------------------------------------ */
 
 export function Convert() {
+  const t = useT();
   const p = usePanel();
   const [outForm, setOutForm] = useState('pem');
 
@@ -188,18 +192,18 @@ export function Convert() {
 
   return (
     <form className="form" onSubmit={submit}>
-      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required
-        hint="The encoding is detected from the file itself, not from its extension." />
-      <SelectField label="Write it as" value={outForm} onChange={setOutForm}
+      <FileInput label={t('f.cert')} name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required
+        hint={t('p.convert.certHint')} />
+      <SelectField label={t('p.convert.out')} value={outForm} onChange={setOutForm}
         options={[
-          { value: 'pem', label: 'PEM — Base64 text, for nginx, Apache and most Unix tooling' },
-          { value: 'der', label: 'DER — raw binary, for Java keystores and Windows tooling' },
+          { value: 'pem', label: t('p.convert.pem') },
+          { value: 'der', label: t('p.convert.der') },
         ]} />
-      <Actions busy={p.busy} disabled={!p.files.cert} need="a certificate">Convert</Actions>
+      <Actions busy={p.busy} disabled={!p.files.cert} need={t('p.merge.need')}>{t('p.convert.go')}</Actions>
       <ErrorBox error={p.error} />
       {p.result?.detectedInputForm && (
         <p className="note">
-          Read the input as <b>{p.result.detectedInputForm.toUpperCase()}</b>.
+          {t('p.convert.detected')} <b>{p.result.detectedInputForm.toUpperCase()}</b>
         </p>
       )}
       <ResultFiles files={p.result?.files} />
@@ -213,6 +217,7 @@ export function Convert() {
 /* ------------------------------------------------------------------ */
 
 export function ChainCheck() {
+  const t = useT();
   const p = usePanel();
 
   const submit = (e) => {
@@ -228,28 +233,26 @@ export function ChainCheck() {
   const r = p.result;
   return (
     <form className="form" onSubmit={submit}>
-      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} required
-        hint="The leaf certificate." />
-      <FileInput label="Intermediates and root" name="chain" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} multiple
-        hint="Add the intermediate and the root as separate files if that is how you received them. Skip this if the leaf file already holds the whole chain." />
-      <Actions busy={p.busy} disabled={!p.files.cert} need="a certificate">Check the chain</Actions>
+      <FileInput label={t('f.cert')} name="cert" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} required
+        hint={t('p.check.certHint')} />
+      <FileInput label={t('f.chain')} name="chain" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} multiple
+        hint={t('p.check.chainHint')} />
+      <Actions busy={p.busy} disabled={!p.files.cert} need={t('p.merge.need')}>{t('p.check.go')}</Actions>
       <ErrorBox error={p.error} />
 
       {r && (
         <section className="out">
           <Verdict
             ok={r.complete}
-            sub={r.complete
-              ? 'every certificate links to its issuer, up to a self-signed root'
-              : 'at least one issuer is missing, so clients cannot build a path to a trusted root'}
+            sub={t(r.complete ? 'p.check.okSub' : 'p.check.badSub')}
           >
-            {r.complete ? 'Chain is complete' : 'Chain is incomplete'}
+            {t(r.complete ? 'p.check.ok' : 'p.check.bad')}
           </Verdict>
           <ChainSpine chain={r.chain} />
           <Issues items={r.issues} />
           {r.unused?.length > 0 && (
             <p className="note">
-              Not part of the path: <b>{r.unused.map((u) => u.subject).join(' · ')}</b>
+              {t('p.check.unused')} <b>{r.unused.map((u) => u.subject).join(' · ')}</b>
             </p>
           )}
         </section>
@@ -270,6 +273,7 @@ export function ChainCheck() {
 /* ------------------------------------------------------------------ */
 
 export function UrlCheck() {
+  const t = useT();
   const p = usePanel();
   const [url, setUrl] = useState('');
 
@@ -281,25 +285,25 @@ export function UrlCheck() {
   const r = p.result;
   return (
     <form className="form" onSubmit={submit}>
-      <TextField label="Host" value={url} onChange={setUrl} required autoFocus
+      <TextField label={t('p.url.host')} value={url} onChange={setUrl} required autoFocus
         placeholder="example.com"
-        hint="A bare hostname, a full URL, or host:port. Port 443 is assumed." />
-      <Actions busy={p.busy} disabled={!url.trim()} need="a hostname" note="Connects from this server, not from your browser.">
-        Check the server
+        hint={t('p.url.hostHint')} />
+      <Actions busy={p.busy} disabled={!url.trim()} need={t('p.url.need')} note={t('p.url.note')}>
+        {t('p.url.go')}
       </Actions>
-      <ErrorBox error={p.error} fix="Check the hostname and that this server can reach it on the port given." />
+      <ErrorBox error={p.error} fix={t('p.url.fix')} />
 
       {r && (
         <section className="out">
           <Verdict ok={r.complete} subMono sub={`${r.host}:${r.port}`}>
-            {r.complete ? 'Chain is complete and trusted' : 'The server is not presenting a usable chain'}
+            {t(r.complete ? 'p.url.ok' : 'p.url.bad')}
           </Verdict>
 
           <div className="facts">
-            {r.protocol && <span className="fact">Protocol<b>{r.protocol}</b></span>}
-            {r.cipher && <span className="fact">Cipher<b>{r.cipher}</b></span>}
+            {r.protocol && <span className="fact">{t('p.url.protocol')}<b>{r.protocol}</b></span>}
+            {r.cipher && <span className="fact">{t('p.url.cipher')}<b>{r.cipher}</b></span>}
             {r.verifyCode !== null && r.verifyCode !== undefined && (
-              <span className="fact">Verify<b>{r.verifyCode} {r.verifyText}</b></span>
+              <span className="fact">{t('p.url.verify')}<b>{r.verifyCode} {r.verifyText}</b></span>
             )}
           </div>
 
@@ -316,6 +320,7 @@ export function UrlCheck() {
 /* ------------------------------------------------------------------ */
 
 export function CsrGenerate() {
+  const t = useT();
   const p = usePanel();
   const [f, setF] = useState({
     commonName: '', organization: '', organizationalUnit: '', locality: '',
@@ -330,38 +335,38 @@ export function CsrGenerate() {
 
   return (
     <form className="form" onSubmit={submit}>
-      <TextField label="Common name" value={f.commonName} onChange={upd('commonName')} required
-        placeholder="example.com" hint="The primary hostname the certificate is for." />
-      <TextField label="Subject alternative names" value={f.sans} onChange={upd('sans')}
+      <TextField label={t('p.csr.cn')} value={f.commonName} onChange={upd('commonName')} required
+        placeholder="example.com" hint={t('p.csr.cnHint')} />
+      <TextField label={t('p.csr.san')} value={f.sans} onChange={upd('sans')}
         placeholder="www.example.com, api.example.com, 10.0.0.1"
-        hint="Comma or space separated. DNS names and IP addresses are told apart automatically. Browsers ignore the common name, so list every hostname here." />
+        hint={t('p.csr.sanHint')} />
 
       <div className="grid2">
-        <TextField label="Organization" value={f.organization} onChange={upd('organization')} />
-        <TextField label="Organizational unit" value={f.organizationalUnit} onChange={upd('organizationalUnit')} />
-        <TextField label="City" value={f.locality} onChange={upd('locality')} />
-        <TextField label="State or province" value={f.state} onChange={upd('state')} />
-        <TextField label="Country" value={f.country} onChange={upd('country')} placeholder="US" />
-        <TextField label="Email" value={f.email} onChange={upd('email')} />
+        <TextField label={t('p.csr.o')} value={f.organization} onChange={upd('organization')} />
+        <TextField label={t('p.csr.ou')} value={f.organizationalUnit} onChange={upd('organizationalUnit')} />
+        <TextField label={t('p.csr.l')} value={f.locality} onChange={upd('locality')} />
+        <TextField label={t('p.csr.st')} value={f.state} onChange={upd('state')} />
+        <TextField label={t('p.csr.c')} value={f.country} onChange={upd('country')} placeholder="US" />
+        <TextField label={t('p.csr.email')} value={f.email} onChange={upd('email')} />
       </div>
 
-      <SelectField label="Key" value={f.keyType} onChange={upd('keyType')}
+      <SelectField label={t('p.csr.key')} value={f.keyType} onChange={upd('keyType')}
         options={[
-          { value: 'rsa2048', label: 'RSA 2048 — accepted everywhere' },
-          { value: 'rsa4096', label: 'RSA 4096 — slower handshakes, longer margin' },
-          { value: 'ecp256', label: 'EC P-256 — smaller and faster, modern clients' },
-          { value: 'ecp384', label: 'EC P-384' },
+          { value: 'rsa2048', label: t('p.csr.rsa2048') },
+          { value: 'rsa4096', label: t('p.csr.rsa4096') },
+          { value: 'ecp256', label: t('p.csr.ecp256') },
+          { value: 'ecp384', label: t('p.csr.ecp384') },
         ]} />
 
-      <TextField label="Password for the new key" type="password" value={f.keyPassword} onChange={upd('keyPassword')}
-        hint="Leave empty for a key your web server can load unattended." />
+      <TextField label={t('p.csr.keyPw')} type="password" value={f.keyPassword} onChange={upd('keyPassword')}
+        hint={t('p.csr.keyPwHint')} />
 
-      <Actions busy={p.busy} disabled={!f.commonName.trim()} need="a common name">Generate key and request</Actions>
+      <Actions busy={p.busy} disabled={!f.commonName.trim()} need={t('p.csr.need')}>{t('p.csr.go')}</Actions>
       <ErrorBox error={p.error} />
       <ResultFiles files={p.result?.files} />
       {p.result?.csrText && (
         <section className="out">
-          <OutHead aside="check this before sending it to the CA">What the request says</OutHead>
+          <OutHead aside={t('p.csr.saysAside')}>{t('p.csr.says')}</OutHead>
           <Plate text={p.result.csrText} />
         </section>
       )}
@@ -375,6 +380,7 @@ export function CsrGenerate() {
 /* ------------------------------------------------------------------ */
 
 export function RemoveKeyPass() {
+  const t = useT();
   const p = usePanel();
   const [password, setPassword] = useState('');
 
@@ -390,13 +396,13 @@ export function RemoveKeyPass() {
 
   return (
     <form className="form" onSubmit={submit}>
-      <FileInput label="Encrypted private key" name="key" accept=".key,.pem" files={p.files} setFiles={p.setFiles} required />
-      <TextField label="Current passphrase" type="password" value={password} onChange={setPassword} required />
-      <Actions busy={p.busy} disabled={!p.files.key || !password} need="the key and its passphrase"
-        note="The result is an unprotected key. Keep it readable only by root.">
-        Remove the passphrase
+      <FileInput label={t('p.pass.key')} name="key" accept=".key,.pem" files={p.files} setFiles={p.setFiles} required />
+      <TextField label={t('p.pass.current')} type="password" value={password} onChange={setPassword} required />
+      <Actions busy={p.busy} disabled={!p.files.key || !password} need={t('p.pass.need')}
+        note={t('p.pass.note')}>
+        {t('p.pass.go')}
       </Actions>
-      <ErrorBox error={p.error} fix="OpenSSL reports a bad decrypt when the passphrase is wrong." />
+      <ErrorBox error={p.error} fix={t('p.pass.fix')} />
       <ResultFiles files={p.result?.files} />
       <Log lines={p.result?.log} />
     </form>
@@ -408,6 +414,7 @@ export function RemoveKeyPass() {
 /* ------------------------------------------------------------------ */
 
 export function Inspect() {
+  const t = useT();
   const p = usePanel();
 
   const submit = (e) => {
@@ -421,13 +428,13 @@ export function Inspect() {
 
   return (
     <form className="form" onSubmit={submit}>
-      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required
-        hint="PEM or DER. Use this to find out what an unlabelled file actually contains." />
-      <Actions busy={p.busy} disabled={!p.files.cert} need="a certificate">Decode it</Actions>
-      <ErrorBox error={p.error} fix="If OpenSSL cannot parse the file, it may be a PKCS#12 bundle or a private key rather than a certificate." />
+      <FileInput label={t('f.cert')} name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required
+        hint={t('p.inspect.certHint')} />
+      <Actions busy={p.busy} disabled={!p.files.cert} need={t('p.merge.need')}>{t('p.inspect.go')}</Actions>
+      <ErrorBox error={p.error} fix={t('p.inspect.fix')} />
       {p.result?.text && (
         <section className="out">
-          <OutHead>Certificate contents</OutHead>
+          <OutHead>{t('p.inspect.out')}</OutHead>
           <Plate text={p.result.text} />
         </section>
       )}

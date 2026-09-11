@@ -3,12 +3,14 @@ import {
   IconAlert, IconCheck, IconCopy, IconCross, IconDownload, IconFile, IconPlus,
   IconShieldCheck, IconSpinner,
 } from './icons.jsx';
+import { useServerMessage, useT } from '../i18n.jsx';
 
 /* ------------------------------------------------------------------ */
 /* Inputs                                                              */
 /* ------------------------------------------------------------------ */
 
 export function FileInput({ label, name, accept, files, setFiles, hint, required, multiple }) {
+  const t = useT();
   const ref = useRef();
   const raw = files[name];
   const list = multiple ? raw || [] : (raw && [raw]) || [];
@@ -60,10 +62,10 @@ export function FileInput({ label, name, accept, files, setFiles, hint, required
     <div className="field">
       <div className="field-label" id={`lbl-${name}`}>
         {label}
-        {required && <span className="required-tag">required</span>}
+        {required && <span className="required-tag">{t('ui.required')}</span>}
         {multiple && list.length > 0 && (
           <span className="count-tag">
-            {list.length} file{list.length > 1 ? 's' : ''}
+            {t(list.length > 1 ? 'ui.files' : 'ui.file', { n: list.length })}
           </span>
         )}
       </div>
@@ -76,9 +78,7 @@ export function FileInput({ label, name, accept, files, setFiles, hint, required
           <>
             <IconFile className="file-icon" size={17} />
             <span className="drop-name drop-prompt">
-              {multiple
-                ? 'Drop one or more files here, or click to browse'
-                : 'Drop a file here, or click to browse'}
+              {t(multiple ? 'ui.dropMany' : 'ui.dropOne')}
             </span>
             <button
               type="button"
@@ -86,7 +86,7 @@ export function FileInput({ label, name, accept, files, setFiles, hint, required
               onClick={() => ref.current.click()}
               aria-labelledby={`lbl-${name}`}
             >
-              <span className="sr-only">Choose a file</span>
+              <span className="sr-only">{t('ui.choose')}</span>
             </button>
           </>
         ) : (
@@ -101,7 +101,7 @@ export function FileInput({ label, name, accept, files, setFiles, hint, required
                 type="button"
                 className="drop-clear"
                 onClick={() => removeAt(i)}
-                aria-label={`Remove ${f.name}`}
+                aria-label={t('ui.remove', { name: f.name })}
               >
                 <IconCross size={16} />
               </button>
@@ -111,7 +111,7 @@ export function FileInput({ label, name, accept, files, setFiles, hint, required
 
         {multiple && !empty && (
           <button type="button" className="drop-add" onClick={() => ref.current.click()}>
-            <IconPlus size={15} /> Add another file
+            <IconPlus size={15} /> {t('ui.addAnother')}
           </button>
         )}
 
@@ -140,12 +140,13 @@ function formatBytes(n) {
 }
 
 export function TextField({ label, value, onChange, type = 'text', placeholder, hint, required, autoFocus }) {
+  const t = useT();
   const id = useFieldId(label);
   return (
     <div className="field">
       <label className="field-label" htmlFor={id}>
         {label}
-        {required && <span className="required-tag">required</span>}
+        {required && <span className="required-tag">{t('ui.required')}</span>}
       </label>
       <input
         id={id}
@@ -206,12 +207,13 @@ function useFieldId(seed) {
 /* ------------------------------------------------------------------ */
 
 export function Actions({ busy, disabled, children, note, need }) {
-  const reason = disabled && need ? `Add ${need} to continue.` : null;
+  const t = useT();
+  const reason = disabled && need ? t('ui.need', { need }) : null;
   return (
     <div className="actions">
       <button className="submit" type="submit" disabled={busy || disabled}>
         {busy && <IconSpinner />}
-        {busy ? 'Working' : children}
+        {busy ? t('ui.working') : children}
       </button>
       {!busy && (reason || note) && <span className="submit-note">{reason || note}</span>}
     </div>
@@ -223,12 +225,13 @@ export function Actions({ busy, disabled, children, note, need }) {
 /* ------------------------------------------------------------------ */
 
 export function ErrorBox({ error, fix }) {
+  const t = useT();
   if (!error) return null;
   return (
     <div className="error-box" role="alert">
       <IconAlert size={17} />
       <div>
-        <b>That did not work</b>
+        <b>{t('ui.failed')}</b>
         <div className="msg">{error}</div>
         {fix && <div className="hint" style={{ marginTop: 6 }}>{fix}</div>}
       </div>
@@ -251,10 +254,11 @@ export function OutHead({ children, aside }) {
 /* ------------------------------------------------------------------ */
 
 export function ResultFiles({ files }) {
+  const t = useT();
   if (!files?.length) return null;
   return (
     <section className="out">
-      <OutHead aside="each link works once, then expires">Files produced</OutHead>
+      <OutHead aside={t('ui.producedAside')}>{t('ui.produced')}</OutHead>
       <ul className="files">
         {files.map((f) => (
           <DownloadItem key={f.token} file={f} />
@@ -265,17 +269,18 @@ export function ResultFiles({ files }) {
 }
 
 function DownloadItem({ file }) {
+  const t = useT();
   const [used, setUsed] = useState(false);
   return (
     <li>
       <span className="f-name">{file.fileName}</span>
       {used ? (
         <span className="dl-used">
-          <IconCheck size={15} /> Downloaded
+          <IconCheck size={15} /> {t('ui.downloaded')}
         </span>
       ) : (
         <a className="dl-btn" href={`/download/${file.token}`} onClick={() => setTimeout(() => setUsed(true), 600)}>
-          <IconDownload size={15} /> Download
+          <IconDownload size={15} /> {t('ui.download')}
         </a>
       )}
     </li>
@@ -287,6 +292,7 @@ function DownloadItem({ file }) {
 /* ------------------------------------------------------------------ */
 
 export function Plate({ text }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
 
   const copy = useCallback(async () => {
@@ -315,7 +321,7 @@ export function Plate({ text }) {
     <div className="plate">
       <button type="button" className={'copy' + (copied ? ' done' : '')} onClick={copy}>
         {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
-        {copied ? 'Copied' : 'Copy'}
+        {copied ? t('ui.copied') : t('ui.copy')}
       </button>
       <pre>{text}</pre>
     </div>
@@ -323,10 +329,11 @@ export function Plate({ text }) {
 }
 
 export function Log({ lines }) {
+  const t = useT();
   if (!lines?.length) return null;
   return (
     <section className="out">
-      <OutHead aside="run these yourself to get the same result">Equivalent OpenSSL commands</OutHead>
+      <OutHead aside={t('ui.commandsAside')}>{t('ui.commands')}</OutHead>
       <Plate text={lines.join('\n')} />
     </section>
   );
@@ -349,13 +356,14 @@ export function Verdict({ ok, children, sub, subMono }) {
 }
 
 export function Issues({ items }) {
+  const render = useServerMessage();
   if (!items?.length) return null;
   return (
     <div className="issues">
       {items.map((x, i) => (
         <div className="issue" key={i}>
           <IconAlert size={16} />
-          <span>{x}</span>
+          <span>{render(x)}</span>
         </div>
       ))}
     </div>
@@ -374,14 +382,15 @@ function shortDate(d) {
   return d.toISOString().slice(0, 10);
 }
 
-function humanSpan(days) {
+function humanSpan(t, days) {
   const d = Math.abs(days);
-  if (d < 90) return `${d} d`;
-  if (d < 730) return `${Math.round(d / 30.44)} mo`;
-  return `${(d / 365.25).toFixed(1)} y`;
+  if (d < 90) return t('ui.days', { n: d });
+  if (d < 730) return t('ui.months', { n: Math.round(d / 30.44) });
+  return t('ui.years', { n: (d / 365.25).toFixed(1) });
 }
 
 export function Validity({ notBefore, notAfter }) {
+  const t = useT();
   const from = parseDate(notBefore);
   const to = parseDate(notAfter);
   if (!from || !to) return null;
@@ -395,15 +404,15 @@ export function Validity({ notBefore, notAfter }) {
   let remain;
   if (days < 0) {
     level = 'bad';
-    remain = `expired ${humanSpan(days)} ago`;
+    remain = t('ui.expiredAgo', { span: humanSpan(t, days) });
   } else if (now < from.getTime()) {
     level = 'warn';
-    remain = `not valid yet`;
+    remain = t('ui.notYet');
   } else if (days <= 30) {
     level = 'warn';
-    remain = `${days} d left`;
+    remain = t('ui.left', { span: t('ui.days', { n: days }) });
   } else {
-    remain = `${humanSpan(days)} left`;
+    remain = t('ui.left', { span: humanSpan(t, days) });
   }
 
   return (
@@ -411,7 +420,7 @@ export function Validity({ notBefore, notAfter }) {
       <div
         className="validity-track"
         role="img"
-        aria-label={`Valid ${shortDate(from)} to ${shortDate(to)}, ${remain}`}
+        aria-label={t('ui.validRange', { from: shortDate(from), to: shortDate(to), remain })}
       >
         <div className={'validity-fill ' + level} style={{ width: `${pct}%` }} />
       </div>
@@ -429,6 +438,7 @@ export function Validity({ notBefore, notAfter }) {
  * "signed by the certificate below it".
  */
 export function ChainSpine({ chain, showValidity = true }) {
+  const t = useT();
   if (!chain?.length) return null;
   return (
     <ol className="spine">
@@ -441,9 +451,9 @@ export function ChainSpine({ chain, showValidity = true }) {
             className={(leaf ? 'is-leaf ' : '') + (root ? 'is-root' : '')}
             style={{ animationDelay: `${Math.min(i, 4) * 35}ms` }}
           >
-            <div className="node-role">{leaf ? 'Leaf' : root ? 'Root (self-signed)' : 'Intermediate'}</div>
+            <div className="node-role">{t(leaf ? 'ui.leaf' : root ? 'ui.root' : 'ui.intermediate')}</div>
             <div className="node-subject">{c.subject}</div>
-            {!root && <div className="node-issuer">signed by {c.issuer}</div>}
+            {!root && <div className="node-issuer">{t('ui.signedBy', { issuer: c.issuer })}</div>}
             {showValidity && <Validity notBefore={c.notBefore} notAfter={c.notAfter} />}
           </li>
         );

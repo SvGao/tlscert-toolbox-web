@@ -160,6 +160,14 @@ export async function inspectCert(dir, certBuf) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * A message the UI has to render. The code and params let it be shown in any
+ * language; `text` is the English fallback for a client that lacks the key.
+ */
+function msg(code, params, text) {
+  return { code, params, text };
+}
+
+/**
  * Walk upward from the first certificate, following issuer -> subject, and
  * return the certification path plus any certificate that was not on it.
  * Matching is by X.509 name hash, not by signature: it establishes who claims
@@ -185,7 +193,11 @@ function buildPath(metas) {
     const next = bySubjectHash.get(current.issuerHash);
     if (!next) {
       warnings.push(
-        `Could not find the issuer of "${current.subject}" among the supplied certificates — an intermediate may be missing.`
+        msg(
+          'w.noIssuer',
+          { subject: current.subject },
+          `Could not find the issuer of "${current.subject}" among the supplied certificates — an intermediate may be missing.`
+        )
       );
       break;
     }
@@ -275,7 +287,11 @@ export async function analyzeChain(dir, { leafBuf, chainBufs = [] }) {
     const next = bySubjectHash.get(current.issuerHash);
     if (!next) {
       issues.push(
-        `Missing intermediate: issuer "${current.issuer}" of "${current.subject}" was not found in the supplied files.`
+        msg(
+          'w.missingIntermediate',
+          { issuer: current.issuer, subject: current.subject },
+          `Missing intermediate: issuer "${current.issuer}" of "${current.subject}" was not found in the supplied files.`
+        )
       );
       break;
     }
@@ -284,7 +300,9 @@ export async function analyzeChain(dir, { leafBuf, chainBufs = [] }) {
 
   const complete = reachedRoot;
   if (!reachedRoot && issues.length === 0) {
-    issues.push('Chain does not terminate in a self-signed root certificate (root not supplied).');
+    issues.push(
+      msg('w.noRoot', {}, 'Chain does not terminate in a self-signed root certificate (root not supplied).')
+    );
   }
 
   // Extra: try openssl verify using the supplied certs as untrusted set.
@@ -364,12 +382,13 @@ async function orderCaCerts(dir, leafBuf, chainBufs, warnings) {
   if (ordered.length > 1) {
     caMetas = ordered.slice(1);
     if (leftover.length) {
-      warnings.push(
-        `Left out of the bundle, not part of this chain: ${leftover.map((c) => c.subject).join('; ')}`
-      );
+      const subjects = leftover.map((c) => c.subject).join('; ');
+      warnings.push(msg('w.leftOut', { subjects }, `Left out of the bundle, not part of this chain: ${subjects}`));
     }
   } else {
-    warnings.push('Certificates could not be auto-ordered; kept them in the order supplied.');
+    warnings.push(
+      msg('w.unordered', {}, 'Certificates could not be auto-ordered; kept them in the order supplied.')
+    );
     caMetas = metas.slice(1);
   }
 
@@ -405,12 +424,13 @@ export async function mergeChain(dir, { leafBuf, chainBufs = [], includeRoot = f
     // A path was found. Certificates off that path belong to some other chain,
     // and serving them would make the bundle wrong, so leave them out and say so.
     finalMetas = ordered;
-    warnings.push(
-      `Left out of the bundle, not part of this chain: ${leftover.map((c) => c.subject).join('; ')}`
-    );
+    const subjects = leftover.map((c) => c.subject).join('; ');
+    warnings.push(msg('w.leftOut', { subjects }, `Left out of the bundle, not part of this chain: ${subjects}`));
   } else {
     // The walk could not get past the leaf; keep everything rather than guess.
-    warnings.push('Certificates could not be auto-ordered; kept them in the order supplied.');
+    warnings.push(
+      msg('w.unordered', {}, 'Certificates could not be auto-ordered; kept them in the order supplied.')
+    );
     finalMetas = metas;
   }
 
@@ -530,17 +550,31 @@ export async function analyzeUrlChain(dir, { host, port }) {
     complete = true;
   } else if (verifyCode === 20 || verifyCode === 21) {
     complete = false;
-    issues.push('Server is missing an intermediate certificate — clients that do not fetch it themselves will fail to verify this site.');
+    issues.push(
+      msg(
+        'w.serverMissingIntermediate',
+        {},
+        'Server is missing an intermediate certificate — clients that do not fetch it themselves will fail to verify this site.'
+      )
+    );
   } else if (verifyCode !== null) {
     complete = false;
     issues.push(`OpenSSL verification failed: ${verifyText} (code ${verifyCode}).`);
   } else {
     // No CA bundle available to judge trust; fall back to structural check.
     complete = contiguous;
-    issues.push('No system CA bundle available to confirm trust; showing structural analysis only.');
+    issues.push(
+      msg('w.noCaBundle', {}, 'No system CA bundle available to confirm trust; showing structural analysis only.')
+    );
   }
   if (!contiguous) {
-    issues.push('The certificates were not sent in a proper leaf → root order (or a link is missing).');
+    issues.push(
+      msg(
+        'w.badOrder',
+        {},
+        'The certificates were not sent in a proper leaf → root order (or a link is missing).'
+      )
+    );
   }
 
   return {

@@ -99,8 +99,10 @@
   --focus: var(--stamp-lift);
 
   /* ---- type ---- */
-  --sans: 'Archivo', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  --mono: 'Spline Sans Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --sans: 'Archivo', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC',
+    'Source Han Sans SC', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: 'Spline Sans Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Noto Sans Mono CJK SC',
+    'Microsoft YaHei', monospace;
 
   /* ---- rhythm ---- */
   --r-sm: 5px;
@@ -217,6 +219,27 @@ pre,
   top: 12px;
 }
 
+/* Latin tracking does not transfer to CJK: reset it and give the denser
+   glyphs a little more room to breathe. */
+:root:lang(zh) .wordmark,
+:root:lang(zh) .work-head h2,
+:root:lang(zh) .kb-toggle,
+:root:lang(zh) .kb-card h4,
+:root:lang(zh) .submit,
+:root:lang(zh) .rail-label {
+  letter-spacing: 0;
+}
+
+:root:lang(zh) body {
+  line-height: 1.65;
+}
+
+:root:lang(zh) .hint,
+:root:lang(zh) .check,
+:root:lang(zh) .work-head p {
+  line-height: 1.7;
+}
+
 /* ==========================================================================
    Masthead
    ========================================================================== */
@@ -311,6 +334,12 @@ pre,
   color: var(--ink);
   border-color: var(--ink-3);
   background: var(--bench-2);
+}
+
+.lang-btn {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 /* ==========================================================================
