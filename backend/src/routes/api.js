@@ -3,7 +3,10 @@ import multer from 'multer';
 import { createWorkDir, removeDir, registerDownload } from '../store.js';
 import * as ops from '../services/certops.js';
 
+const MAX_CHAIN_FILES = 12;
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+const chainBufs = (req) => (req.files?.chain || []).map((f) => f.buffer);
 const router = express.Router();
 
 // Map produced files (in a work dir) to one-time download descriptors.
@@ -58,21 +61,24 @@ router.post(
 /* ---- key + cert (+ chain) -> PFX ---- */
 router.post(
   '/pfx/create',
-  upload.fields([{ name: 'key', maxCount: 1 }, { name: 'cert', maxCount: 1 }, { name: 'chain', maxCount: 1 }]),
+  upload.fields([
+    { name: 'key', maxCount: 1 },
+    { name: 'cert', maxCount: 1 },
+    { name: 'chain', maxCount: MAX_CHAIN_FILES },
+  ]),
   withWork(async (req, res, dir) => {
     const key = req.files?.key?.[0];
     const cert = req.files?.cert?.[0];
-    const chain = req.files?.chain?.[0];
     if (!key || !cert) throw new Error('Both a private key and a certificate file are required.');
-    const { produced, log } = await ops.createPfx(dir, {
+    const { produced, log, warnings } = await ops.createPfx(dir, {
       keyBuf: key.buffer,
       certBuf: cert.buffer,
-      chainBuf: chain?.buffer,
+      chainBufs: chainBufs(req),
       exportPassword: req.body.exportPassword,
       keyPassword: req.body.keyPassword,
       legacy: req.body.legacy === 'true',
     });
-    res.json({ files: publish(produced), log });
+    res.json({ files: publish(produced), log, warnings });
   })
 );
 
@@ -103,12 +109,11 @@ router.post(
 /* ---- Chain analysis ---- */
 router.post(
   '/chain/check',
-  upload.fields([{ name: 'cert', maxCount: 1 }, { name: 'chain', maxCount: 1 }]),
+  upload.fields([{ name: 'cert', maxCount: 1 }, { name: 'chain', maxCount: MAX_CHAIN_FILES }]),
   withWork(async (req, res, dir) => {
     const cert = req.files?.cert?.[0];
-    const chain = req.files?.chain?.[0];
     if (!cert) throw new Error('Please upload the certificate (leaf) file.');
-    const result = await ops.analyzeChain(dir, { leafBuf: cert.buffer, chainBuf: chain?.buffer });
+    const result = await ops.analyzeChain(dir, { leafBuf: cert.buffer, chainBufs: chainBufs(req) });
     res.json(result);
   })
 );
@@ -116,14 +121,13 @@ router.post(
 /* ---- Merge certificate + chain into one bundle (no private key) ---- */
 router.post(
   '/chain/merge',
-  upload.fields([{ name: 'cert', maxCount: 1 }, { name: 'chain', maxCount: 1 }]),
+  upload.fields([{ name: 'cert', maxCount: 1 }, { name: 'chain', maxCount: MAX_CHAIN_FILES }]),
   withWork(async (req, res, dir) => {
     const cert = req.files?.cert?.[0];
-    const chain = req.files?.chain?.[0];
     if (!cert) throw new Error('Please upload the certificate (leaf) file.');
     const { produced, order, count, warnings, log } = await ops.mergeChain(dir, {
       leafBuf: cert.buffer,
-      chainBuf: chain?.buffer,
+      chainBufs: chainBufs(req),
       includeRoot: req.body.includeRoot === 'true',
     });
     res.json({ files: publish(produced), order, count, warnings, log });

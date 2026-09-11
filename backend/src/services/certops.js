@@ -68,11 +68,12 @@ export async function extractPfx(dir, pfxBuf, password, { stripKeyPass = true } 
 /* ------------------------------------------------------------------ */
 /* key + cert (+ chain) -> PFX                                         */
 /* ------------------------------------------------------------------ */
-export async function createPfx(dir, { keyBuf, certBuf, chainBuf, exportPassword, keyPassword, legacy }) {
+export async function createPfx(dir, { keyBuf, certBuf, chainBufs = [], exportPassword, keyPassword, legacy }) {
   const key = write(dir, 'in.key', keyBuf);
   const cert = write(dir, 'in.crt', certBuf);
   const out = path.join(dir, 'certificate.pfx');
 
+  const warnings = [];
   const args = ['pkcs12', '-export', '-out', out, '-inkey', key, '-in', cert, '-passout', 'env:OUTPW'];
   const env = { OUTPW: exportPassword || '' };
 
@@ -80,8 +81,12 @@ export async function createPfx(dir, { keyBuf, certBuf, chainBuf, exportPassword
     args.push('-passin', 'env:INPW');
     env.INPW = keyPassword;
   }
-  if (chainBuf && chainBuf.length) {
-    const chain = write(dir, 'chain.crt', chainBuf);
+  // Intermediates and the root commonly arrive as separate files. Order them
+  // leaf -> root and drop anything off the path, so the bundle never carries a
+  // certificate from an unrelated chain. -certfile takes one PEM file.
+  const chainPem = await orderCaCerts(dir, certBuf, chainBufs, warnings);
+  if (chainPem) {
+    const chain = write(dir, 'chain.crt', chainPem);
     args.push('-certfile', chain);
   }
   if (legacy) args.push('-legacy');
@@ -99,9 +104,10 @@ export async function createPfx(dir, { keyBuf, certBuf, chainBuf, exportPassword
 
   return {
     produced: [{ path: out, name: 'certificate.pfx' }],
+    warnings,
     log: [
       `openssl pkcs12 -export -out certificate.pfx -inkey server.key -in cert.pem${
-        chainBuf ? ' -certfile chain.crt' : ''
+        chainPem ? ' -certfile chain.crt' : ''
       }${legacy ? ' -legacy' : ''}`,
     ],
   };
@@ -153,6 +159,51 @@ export async function inspectCert(dir, certBuf) {
 /* Certificate chain detection                                         */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Walk upward from the first certificate, following issuer -> subject, and
+ * return the certification path plus any certificate that was not on it.
+ * Matching is by X.509 name hash, not by signature: it establishes who claims
+ * to have issued whom. `openssl verify` is what proves the signatures.
+ */
+function buildPath(metas) {
+  const bySubjectHash = new Map();
+  for (const c of metas) if (!bySubjectHash.has(c.subjectHash)) bySubjectHash.set(c.subjectHash, c);
+
+  const ordered = [];
+  const seen = new Set();
+  const warnings = [];
+  let current = metas[0];
+  let reachedRoot = false;
+
+  while (current && !seen.has(current.subjectHash)) {
+    ordered.push(current);
+    seen.add(current.subjectHash);
+    if (current.selfSigned) {
+      reachedRoot = true;
+      break;
+    }
+    const next = bySubjectHash.get(current.issuerHash);
+    if (!next) {
+      warnings.push(
+        `Could not find the issuer of "${current.subject}" among the supplied certificates — an intermediate may be missing.`
+      );
+      break;
+    }
+    current = next;
+  }
+
+  return { ordered, leftover: metas.filter((c) => !seen.has(c.subjectHash)), warnings, reachedRoot };
+}
+
+// Join several uploaded PEM files into one bundle, keeping the order given.
+function joinPems(bufs = []) {
+  const parts = bufs
+    .filter((b) => b && b.length)
+    .map((b) => b.toString('latin1').trim())
+    .filter(Boolean);
+  return parts.length ? `${parts.join('\n')}\n` : '';
+}
+
 // Split a bundle of concatenated PEM certificates into individual blocks.
 function splitPems(text) {
   const re = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
@@ -187,10 +238,10 @@ async function certMeta(dir, pem, idx) {
   };
 }
 
-export async function analyzeChain(dir, { leafBuf, chainBuf }) {
+export async function analyzeChain(dir, { leafBuf, chainBufs = [] }) {
   const all = [];
   const leafPems = splitPems(leafBuf.toString('latin1'));
-  const chainPems = chainBuf ? splitPems(chainBuf.toString('latin1')) : [];
+  const chainPems = chainBufs.flatMap((b) => splitPems(b.toString('latin1')));
 
   if (!leafPems.length) {
     throw new Error('No PEM certificate found in the certificate file. Convert DER to PEM first.');
@@ -286,48 +337,80 @@ async function normalizeToPems(dir, buf, tag) {
 }
 
 /**
+ * Order the supplied CA certificates leaf -> root and return them as one PEM,
+ * with the leaf itself removed (it reaches OpenSSL through -in). Certificates
+ * that are not part of the leaf's chain are dropped and reported.
+ */
+async function orderCaCerts(dir, leafBuf, chainBufs, warnings) {
+  const chainPems = [];
+  for (let i = 0; i < chainBufs.length; i++) {
+    const buf = chainBufs[i];
+    if (!buf || !buf.length) continue;
+    chainPems.push(...(await normalizeToPems(dir, buf, `pfxchain${i}`)));
+  }
+  if (!chainPems.length) return '';
+
+  const leafPems = await normalizeToPems(dir, leafBuf, 'pfxleaf');
+  if (!leafPems.length) return joinPems(chainBufs);
+
+  const pool = [leafPems[0], ...chainPems];
+  const metas = [];
+  for (let i = 0; i < pool.length; i++) metas.push(await certMeta(dir, pool[i], `pfx${i}`));
+
+  const { ordered, leftover, warnings: pathWarnings } = buildPath(metas);
+  warnings.push(...pathWarnings);
+
+  let caMetas;
+  if (ordered.length > 1) {
+    caMetas = ordered.slice(1);
+    if (leftover.length) {
+      warnings.push(
+        `Left out of the bundle, not part of this chain: ${leftover.map((c) => c.subject).join('; ')}`
+      );
+    }
+  } else {
+    warnings.push('Certificates could not be auto-ordered; kept them in the order supplied.');
+    caMetas = metas.slice(1);
+  }
+
+  return `${caMetas.map((c) => fs.readFileSync(c.path, 'utf8').trim()).join('\n')}\n`;
+}
+
+/**
  * Concatenate a leaf certificate with its intermediate(s) into one
  * PEM bundle, ordered leaf -> intermediate -> root. No private key involved.
  * By default the self-signed root is dropped (standard web-server "fullchain").
  */
-export async function mergeChain(dir, { leafBuf, chainBuf, includeRoot = false }) {
+export async function mergeChain(dir, { leafBuf, chainBufs = [], includeRoot = false }) {
   const leafPems = await normalizeToPems(dir, leafBuf, 'leaf');
-  const chainPems = chainBuf && chainBuf.length ? await normalizeToPems(dir, chainBuf, 'chain') : [];
+  const chainPems = [];
+  for (let i = 0; i < chainBufs.length; i++) {
+    const buf = chainBufs[i];
+    if (!buf || !buf.length) continue;
+    // A distinct tag per upload: normalizeToPems names its temp file after it.
+    chainPems.push(...(await normalizeToPems(dir, buf, `chain${i}`)));
+  }
   if (!leafPems.length) throw new Error('No certificate found in the certificate file.');
 
   const pool = [...leafPems, ...chainPems];
   const metas = [];
   for (let i = 0; i < pool.length; i++) metas.push(await certMeta(dir, pool[i], i));
 
-  const bySubjectHash = new Map();
-  for (const c of metas) if (!bySubjectHash.has(c.subjectHash)) bySubjectHash.set(c.subjectHash, c);
+  const { ordered, leftover, warnings } = buildPath(metas);
 
-  // Order leaf -> root by following issuer links.
-  const ordered = [];
-  const seen = new Set();
-  const warnings = [];
-  let current = metas[0];
-  while (current && !seen.has(current.subjectHash)) {
-    ordered.push(current);
-    seen.add(current.subjectHash);
-    if (current.selfSigned) break;
-    const next = bySubjectHash.get(current.issuerHash);
-    if (!next) {
-      warnings.push(
-        `Could not find the issuer of "${current.subject}" among the supplied certificates — the bundle may be missing an intermediate.`
-      );
-      break;
-    }
-    current = next;
-  }
-
-  // If some supplied certs were not part of the ordered path, fall back to
-  // the given order (leaf file first, then chain file) to avoid dropping certs.
   let finalMetas;
-  if (ordered.length === metas.length) {
+  if (!leftover.length) {
     finalMetas = ordered;
+  } else if (ordered.length > 1) {
+    // A path was found. Certificates off that path belong to some other chain,
+    // and serving them would make the bundle wrong, so leave them out and say so.
+    finalMetas = ordered;
+    warnings.push(
+      `Left out of the bundle, not part of this chain: ${leftover.map((c) => c.subject).join('; ')}`
+    );
   } else {
-    warnings.push('Certificates could not be fully auto-ordered; kept them in the supplied order.');
+    // The walk could not get past the leaf; keep everything rather than guess.
+    warnings.push('Certificates could not be auto-ordered; kept them in the order supplied.');
     finalMetas = metas;
   }
 

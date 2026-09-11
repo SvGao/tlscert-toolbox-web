@@ -1,8 +1,15 @@
 import React, { useState } from 'react';
 import { postForm, postJson } from '../api.js';
 import {
-  FileInput, TextField, SelectField, SubmitButton, ResultFiles, ErrorBox, Log,
+  Actions, ChainSpine, Checkbox, ErrorBox, FileInput, Issues, Log, OutHead,
+  Plate, ResultFiles, SelectField, TextField, Verdict,
 } from './ui.jsx';
+
+// The chain field takes several files: intermediates and the root are often
+// delivered separately. Each is appended under the same field name.
+function appendChain(fd, chain) {
+  (chain || []).forEach((f) => fd.append('chain', f));
+}
 
 function usePanel() {
   const [files, setFiles] = useState({});
@@ -10,19 +17,29 @@ function usePanel() {
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
   const run = async (fn) => {
-    setBusy(true); setError(''); setResult(null);
-    try { setResult(await fn()); }
-    catch (e) { setError(e.message); }
-    finally { setBusy(false); }
+    setBusy(true);
+    setError('');
+    setResult(null);
+    try {
+      setResult(await fn());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
   };
   return { files, setFiles, busy, error, result, run };
 }
 
-/* ---------------- PFX -> key + cert ---------------- */
+/* ------------------------------------------------------------------ */
+/* PFX -> key + cert                                                   */
+/* ------------------------------------------------------------------ */
+
 export function PfxExtract() {
   const p = usePanel();
   const [password, setPassword] = useState('');
   const [strip, setStrip] = useState(true);
+
   const submit = (e) => {
     e.preventDefault();
     p.run(async () => {
@@ -33,68 +50,131 @@ export function PfxExtract() {
       return postForm('/api/pfx/extract', fd);
     });
   };
+
   return (
-    <form onSubmit={submit}>
-      <p className="desc">Extract the certificate and private key from a PKCS#12 (.pfx / .p12) file.</p>
-      <FileInput label="PFX file" name="pfx" accept=".pfx,.p12" files={p.files} setFiles={p.setFiles} required />
-      <TextField label="PFX password" type="password" value={password} onChange={setPassword}
-        hint="Leave empty if the file has no password." />
-      <label className="check">
-        <input type="checkbox" checked={strip} onChange={(e) => setStrip(e.target.checked)} />
-        Also remove passphrase from private key (produces server.key)
-      </label>
-      <SubmitButton busy={p.busy}>Extract</SubmitButton>
-      <ErrorBox error={p.error} />
+    <form className="form" onSubmit={submit}>
+      <FileInput label="PKCS#12 bundle" name="pfx" accept=".pfx,.p12" files={p.files} setFiles={p.setFiles} required
+        hint="A .pfx or .p12 holding the certificate and its private key." />
+      <TextField label="Bundle password" type="password" value={password} onChange={setPassword}
+        hint="Leave empty if the bundle has no password." />
+      <Checkbox checked={strip} onChange={setStrip}>
+        Decrypt the private key too, so nginx and Apache can load it without a passphrase prompt. Written as{' '}
+        <code>server.key</code>.
+      </Checkbox>
+      <Actions busy={p.busy} disabled={!p.files.pfx} need="a PKCS#12 bundle">Extract</Actions>
+      <ErrorBox error={p.error} fix="Wrong password is the usual cause. Bundles written by older tools may also need OpenSSL's legacy provider, which this tool retries with automatically." />
       <ResultFiles files={p.result?.files} />
       <Log lines={p.result?.log} />
     </form>
   );
 }
 
-/* ---------------- key + cert -> PFX ---------------- */
+/* ------------------------------------------------------------------ */
+/* key + cert -> PFX                                                   */
+/* ------------------------------------------------------------------ */
+
 export function PfxCreate() {
   const p = usePanel();
   const [exportPassword, setExportPassword] = useState('');
   const [keyPassword, setKeyPassword] = useState('');
   const [legacy, setLegacy] = useState(false);
+
   const submit = (e) => {
     e.preventDefault();
     p.run(async () => {
       const fd = new FormData();
       fd.append('key', p.files.key);
       fd.append('cert', p.files.cert);
-      if (p.files.chain) fd.append('chain', p.files.chain);
+      appendChain(fd, p.files.chain);
       fd.append('exportPassword', exportPassword);
       fd.append('keyPassword', keyPassword);
       fd.append('legacy', String(legacy));
       return postForm('/api/pfx/create', fd);
     });
   };
+
   return (
-    <form onSubmit={submit}>
-      <p className="desc">Combine a private key and certificate (with optional chain) into a .pfx file.</p>
+    <form className="form" onSubmit={submit}>
       <FileInput label="Private key" name="key" accept=".key,.pem" files={p.files} setFiles={p.setFiles} required />
       <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} required />
-      <FileInput label="Chain / intermediates (optional)" name="chain" accept=".pem,.crt,.cer"
-        files={p.files} setFiles={p.setFiles} hint="CA bundle appended with -certfile." />
-      <TextField label="PFX export password" type="password" value={exportPassword} onChange={setExportPassword} />
-      <TextField label="Key password (if the key is encrypted)" type="password" value={keyPassword} onChange={setKeyPassword} />
-      <label className="check">
-        <input type="checkbox" checked={legacy} onChange={(e) => setLegacy(e.target.checked)} />
-        Use -legacy (for compatibility with older Windows / IIS imports)
-      </label>
-      <SubmitButton busy={p.busy}>Create PFX</SubmitButton>
-      <ErrorBox error={p.error} />
+      <FileInput label="Intermediates and root" name="chain" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} multiple
+        hint="Add the intermediate and the root as separate files, or one bundle holding both. Include them so the importing server presents a complete chain." />
+      <TextField label="Password to protect the new bundle" type="password" value={exportPassword} onChange={setExportPassword} />
+      <TextField label="Password on the private key" type="password" value={keyPassword} onChange={setKeyPassword}
+        hint="Only needed if the key you uploaded is encrypted." />
+      <Checkbox checked={legacy} onChange={setLegacy}>
+        Write with legacy algorithms, for Windows and IIS versions that reject OpenSSL 3 defaults
+      </Checkbox>
+      <Actions busy={p.busy} disabled={!p.files.key || !p.files.cert} need="a private key and a certificate">Create bundle</Actions>
+      <ErrorBox error={p.error} fix="If OpenSSL reports a key and certificate mismatch, the two files belong to different certificates." />
+      {p.result?.warnings?.length > 0 && (
+        <section className="out">
+          <Issues items={p.result.warnings} />
+        </section>
+      )}
       <ResultFiles files={p.result?.files} />
       <Log lines={p.result?.log} />
     </form>
   );
 }
 
-/* ---------------- Convert PEM <-> DER ---------------- */
+/* ------------------------------------------------------------------ */
+/* Merge cert + chain                                                  */
+/* ------------------------------------------------------------------ */
+
+export function ChainMerge() {
+  const p = usePanel();
+  const [includeRoot, setIncludeRoot] = useState(false);
+
+  const submit = (e) => {
+    e.preventDefault();
+    p.run(async () => {
+      const fd = new FormData();
+      fd.append('cert', p.files.cert);
+      appendChain(fd, p.files.chain);
+      fd.append('includeRoot', String(includeRoot));
+      return postForm('/api/chain/merge', fd);
+    });
+  };
+
+  const r = p.result;
+  return (
+    <form className="form" onSubmit={submit}>
+      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required
+        hint="The leaf certificate, the one issued for your hostname. PEM or DER." />
+      <FileInput label="Intermediates and root" name="chain" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} multiple
+        hint="Add the intermediate and the root as separate files, or one bundle holding both. Order does not matter, and PEM and DER can be mixed." />
+      <Checkbox checked={includeRoot} onChange={setIncludeRoot}>
+        Keep the self-signed root in the output. Web servers normally leave it out, since clients already trust it.
+      </Checkbox>
+      <Actions busy={p.busy} disabled={!p.files.cert} need="a certificate">Merge into fullchain.pem</Actions>
+      <ErrorBox error={p.error} />
+
+      {r && (
+        <>
+          <section className="out">
+            <Verdict ok sub={`${r.count} certificate${r.count > 1 ? 's' : ''}, ordered leaf to root`}>
+              Merged
+            </Verdict>
+            <ChainSpine chain={r.order} showValidity={false} />
+            <Issues items={r.warnings} />
+          </section>
+          <ResultFiles files={r.files} />
+          <Log lines={r.log} />
+        </>
+      )}
+    </form>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Convert PEM <-> DER                                                 */
+/* ------------------------------------------------------------------ */
+
 export function Convert() {
   const p = usePanel();
   const [outForm, setOutForm] = useState('pem');
+
   const submit = (e) => {
     e.preventDefault();
     p.run(async () => {
@@ -105,28 +185,199 @@ export function Convert() {
       return postForm('/api/convert', fd);
     });
   };
+
   return (
-    <form onSubmit={submit}>
-      <p className="desc">Convert a certificate between PEM and DER encodings (CER / CRT / DER / PEM). Input format is auto-detected.</p>
-      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required />
-      <SelectField label="Output format" value={outForm} onChange={setOutForm}
+    <form className="form" onSubmit={submit}>
+      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required
+        hint="The encoding is detected from the file itself, not from its extension." />
+      <SelectField label="Write it as" value={outForm} onChange={setOutForm}
         options={[
-          { value: 'pem', label: 'PEM (Base64, .crt / .pem)' },
-          { value: 'der', label: 'DER (binary, .der / .cer)' },
+          { value: 'pem', label: 'PEM — Base64 text, for nginx, Apache and most Unix tooling' },
+          { value: 'der', label: 'DER — raw binary, for Java keystores and Windows tooling' },
         ]} />
-      <SubmitButton busy={p.busy}>Convert</SubmitButton>
+      <Actions busy={p.busy} disabled={!p.files.cert} need="a certificate">Convert</Actions>
       <ErrorBox error={p.error} />
-      {p.result?.detectedInputForm && <p className="note">Detected input format: <b>{p.result.detectedInputForm}</b></p>}
+      {p.result?.detectedInputForm && (
+        <p className="note">
+          Read the input as <b>{p.result.detectedInputForm.toUpperCase()}</b>.
+        </p>
+      )}
       <ResultFiles files={p.result?.files} />
       <Log lines={p.result?.log} />
     </form>
   );
 }
 
-/* ---------------- Remove key passphrase ---------------- */
+/* ------------------------------------------------------------------ */
+/* Chain check (file)                                                  */
+/* ------------------------------------------------------------------ */
+
+export function ChainCheck() {
+  const p = usePanel();
+
+  const submit = (e) => {
+    e.preventDefault();
+    p.run(async () => {
+      const fd = new FormData();
+      fd.append('cert', p.files.cert);
+      appendChain(fd, p.files.chain);
+      return postForm('/api/chain/check', fd);
+    });
+  };
+
+  const r = p.result;
+  return (
+    <form className="form" onSubmit={submit}>
+      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} required
+        hint="The leaf certificate." />
+      <FileInput label="Intermediates and root" name="chain" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} multiple
+        hint="Add the intermediate and the root as separate files if that is how you received them. Skip this if the leaf file already holds the whole chain." />
+      <Actions busy={p.busy} disabled={!p.files.cert} need="a certificate">Check the chain</Actions>
+      <ErrorBox error={p.error} />
+
+      {r && (
+        <section className="out">
+          <Verdict
+            ok={r.complete}
+            sub={r.complete
+              ? 'every certificate links to its issuer, up to a self-signed root'
+              : 'at least one issuer is missing, so clients cannot build a path to a trusted root'}
+          >
+            {r.complete ? 'Chain is complete' : 'Chain is incomplete'}
+          </Verdict>
+          <ChainSpine chain={r.chain} />
+          <Issues items={r.issues} />
+          {r.unused?.length > 0 && (
+            <p className="note">
+              Not part of the path: <b>{r.unused.map((u) => u.subject).join(' · ')}</b>
+            </p>
+          )}
+        </section>
+      )}
+
+      {r?.verify && (
+        <section className="out">
+          <OutHead>openssl verify</OutHead>
+          <Plate text={r.verify} />
+        </section>
+      )}
+    </form>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Chain check (URL)                                                   */
+/* ------------------------------------------------------------------ */
+
+export function UrlCheck() {
+  const p = usePanel();
+  const [url, setUrl] = useState('');
+
+  const submit = (e) => {
+    e.preventDefault();
+    p.run(async () => postJson('/api/chain/url', { url }));
+  };
+
+  const r = p.result;
+  return (
+    <form className="form" onSubmit={submit}>
+      <TextField label="Host" value={url} onChange={setUrl} required autoFocus
+        placeholder="example.com"
+        hint="A bare hostname, a full URL, or host:port. Port 443 is assumed." />
+      <Actions busy={p.busy} disabled={!url.trim()} need="a hostname" note="Connects from this server, not from your browser.">
+        Check the server
+      </Actions>
+      <ErrorBox error={p.error} fix="Check the hostname and that this server can reach it on the port given." />
+
+      {r && (
+        <section className="out">
+          <Verdict ok={r.complete} subMono sub={`${r.host}:${r.port}`}>
+            {r.complete ? 'Chain is complete and trusted' : 'The server is not presenting a usable chain'}
+          </Verdict>
+
+          <div className="facts">
+            {r.protocol && <span className="fact">Protocol<b>{r.protocol}</b></span>}
+            {r.cipher && <span className="fact">Cipher<b>{r.cipher}</b></span>}
+            {r.verifyCode !== null && r.verifyCode !== undefined && (
+              <span className="fact">Verify<b>{r.verifyCode} {r.verifyText}</b></span>
+            )}
+          </div>
+
+          <ChainSpine chain={r.chain} />
+          <Issues items={r.issues} />
+        </section>
+      )}
+    </form>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Generate CSR                                                        */
+/* ------------------------------------------------------------------ */
+
+export function CsrGenerate() {
+  const p = usePanel();
+  const [f, setF] = useState({
+    commonName: '', organization: '', organizationalUnit: '', locality: '',
+    state: '', country: '', email: '', sans: '', keyType: 'rsa2048', keyPassword: '',
+  });
+  const upd = (k) => (v) => setF((prev) => ({ ...prev, [k]: v }));
+
+  const submit = (e) => {
+    e.preventDefault();
+    p.run(async () => postJson('/api/csr/generate', { ...f, sans: f.sans }));
+  };
+
+  return (
+    <form className="form" onSubmit={submit}>
+      <TextField label="Common name" value={f.commonName} onChange={upd('commonName')} required
+        placeholder="example.com" hint="The primary hostname the certificate is for." />
+      <TextField label="Subject alternative names" value={f.sans} onChange={upd('sans')}
+        placeholder="www.example.com, api.example.com, 10.0.0.1"
+        hint="Comma or space separated. DNS names and IP addresses are told apart automatically. Browsers ignore the common name, so list every hostname here." />
+
+      <div className="grid2">
+        <TextField label="Organization" value={f.organization} onChange={upd('organization')} />
+        <TextField label="Organizational unit" value={f.organizationalUnit} onChange={upd('organizationalUnit')} />
+        <TextField label="City" value={f.locality} onChange={upd('locality')} />
+        <TextField label="State or province" value={f.state} onChange={upd('state')} />
+        <TextField label="Country" value={f.country} onChange={upd('country')} placeholder="US" />
+        <TextField label="Email" value={f.email} onChange={upd('email')} />
+      </div>
+
+      <SelectField label="Key" value={f.keyType} onChange={upd('keyType')}
+        options={[
+          { value: 'rsa2048', label: 'RSA 2048 — accepted everywhere' },
+          { value: 'rsa4096', label: 'RSA 4096 — slower handshakes, longer margin' },
+          { value: 'ecp256', label: 'EC P-256 — smaller and faster, modern clients' },
+          { value: 'ecp384', label: 'EC P-384' },
+        ]} />
+
+      <TextField label="Password for the new key" type="password" value={f.keyPassword} onChange={upd('keyPassword')}
+        hint="Leave empty for a key your web server can load unattended." />
+
+      <Actions busy={p.busy} disabled={!f.commonName.trim()} need="a common name">Generate key and request</Actions>
+      <ErrorBox error={p.error} />
+      <ResultFiles files={p.result?.files} />
+      {p.result?.csrText && (
+        <section className="out">
+          <OutHead aside="check this before sending it to the CA">What the request says</OutHead>
+          <Plate text={p.result.csrText} />
+        </section>
+      )}
+      <Log lines={p.result?.log} />
+    </form>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Remove key passphrase                                               */
+/* ------------------------------------------------------------------ */
+
 export function RemoveKeyPass() {
   const p = usePanel();
   const [password, setPassword] = useState('');
+
   const submit = (e) => {
     e.preventDefault();
     p.run(async () => {
@@ -136,169 +387,29 @@ export function RemoveKeyPass() {
       return postForm('/api/key/remove-pass', fd);
     });
   };
+
   return (
-    <form onSubmit={submit}>
-      <p className="desc">Strip the passphrase from an encrypted private key.</p>
-      <FileInput label="Private key" name="key" accept=".key,.pem" files={p.files} setFiles={p.setFiles} required />
+    <form className="form" onSubmit={submit}>
+      <FileInput label="Encrypted private key" name="key" accept=".key,.pem" files={p.files} setFiles={p.setFiles} required />
       <TextField label="Current passphrase" type="password" value={password} onChange={setPassword} required />
-      <SubmitButton busy={p.busy}>Remove passphrase</SubmitButton>
-      <ErrorBox error={p.error} />
+      <Actions busy={p.busy} disabled={!p.files.key || !password} need="the key and its passphrase"
+        note="The result is an unprotected key. Keep it readable only by root.">
+        Remove the passphrase
+      </Actions>
+      <ErrorBox error={p.error} fix="OpenSSL reports a bad decrypt when the passphrase is wrong." />
       <ResultFiles files={p.result?.files} />
       <Log lines={p.result?.log} />
     </form>
   );
 }
 
-/* ---------------- Chain check ---------------- */
-export function ChainCheck() {
-  const p = usePanel();
-  const submit = (e) => {
-    e.preventDefault();
-    p.run(async () => {
-      const fd = new FormData();
-      fd.append('cert', p.files.cert);
-      if (p.files.chain) fd.append('chain', p.files.chain);
-      return postJsonChain(fd);
-    });
-  };
-  const r = p.result;
-  return (
-    <form onSubmit={submit}>
-      <p className="desc">Verify that a certificate chain is complete and terminates in a root. Upload the leaf certificate and (optionally) the intermediate/CA bundle.</p>
-      <FileInput label="Certificate (leaf)" name="cert" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} required />
-      <FileInput label="Chain / CA bundle (optional)" name="chain" accept=".pem,.crt,.cer" files={p.files} setFiles={p.setFiles} />
-      <SubmitButton busy={p.busy}>Check chain</SubmitButton>
-      <ErrorBox error={p.error} />
-      {r && (
-        <div className="chain-report">
-          <div className={'chain-status ' + (r.complete ? 'ok' : 'bad')}>
-            {r.complete ? '✔ Chain is complete (reaches a self-signed root)' : '✘ Chain is incomplete'}
-          </div>
-          <ol className="chain-list">
-            {r.chain.map((c, i) => (
-              <li key={i}>
-                <div className="c-subj">{c.subject}</div>
-                <div className="c-meta">Issuer: {c.issuer}</div>
-                <div className="c-meta">Valid: {c.notBefore} → {c.notAfter}{c.selfSigned ? '  · self-signed (root)' : ''}</div>
-              </li>
-            ))}
-          </ol>
-          {r.issues?.length > 0 && (
-            <div className="issues">
-              {r.issues.map((x, i) => <div key={i} className="issue">⚠ {x}</div>)}
-            </div>
-          )}
-          {r.unused?.length > 0 && (
-            <p className="note">Unused certificates supplied: {r.unused.map((u) => u.subject).join('; ')}</p>
-          )}
-          {r.verify && <div className="log"><h4>openssl verify</h4><pre>{r.verify}</pre></div>}
-        </div>
-      )}
-    </form>
-  );
-}
-async function postJsonChain(fd) { return postForm('/api/chain/check', fd); }
+/* ------------------------------------------------------------------ */
+/* Inspect                                                             */
+/* ------------------------------------------------------------------ */
 
-/* ---------------- Merge cert + chain (no private key) ---------------- */
-export function ChainMerge() {
-  const p = usePanel();
-  const [includeRoot, setIncludeRoot] = useState(false);
-  const submit = (e) => {
-    e.preventDefault();
-    p.run(async () => {
-      const fd = new FormData();
-      fd.append('cert', p.files.cert);
-      if (p.files.chain) fd.append('chain', p.files.chain);
-      fd.append('includeRoot', String(includeRoot));
-      return postForm('/api/chain/merge', fd);
-    });
-  };
-  const r = p.result;
-  return (
-    <form onSubmit={submit}>
-      <p className="desc">Combine a certificate with its intermediate(s) into a single <code>fullchain.pem</code>, ordered leaf → root. No private key needed. Inputs may be PEM or DER.</p>
-      <FileInput label="Certificate (leaf)" name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required />
-      <FileInput label="Intermediate / chain" name="chain" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles}
-        hint="One or more CA certificates (a bundle is fine)." />
-      <label className="check">
-        <input type="checkbox" checked={includeRoot} onChange={(e) => setIncludeRoot(e.target.checked)} />
-        Include the self-signed root (usually omitted for web servers)
-      </label>
-      <SubmitButton busy={p.busy}>Merge into fullchain.pem</SubmitButton>
-      <ErrorBox error={p.error} />
-      {r && (
-        <>
-          <div className="chain-report">
-            <div className="chain-status ok">✔ Merged {r.count} certificate{r.count > 1 ? 's' : ''} (leaf → root order)</div>
-            <ol className="chain-list">
-              {r.order.map((c, i) => (
-                <li key={i}>
-                  <div className="c-subj">{c.subject}{c.selfSigned ? '  · root' : ''}</div>
-                  <div className="c-meta">Issuer: {c.issuer}</div>
-                </li>
-              ))}
-            </ol>
-            {r.warnings?.length > 0 && (
-              <div className="issues">{r.warnings.map((x, i) => <div key={i} className="issue">⚠ {x}</div>)}</div>
-            )}
-          </div>
-          <ResultFiles files={r.files} />
-          <Log lines={r.log} />
-        </>
-      )}
-    </form>
-  );
-}
-
-/* ---------------- URL chain check ---------------- */
-export function UrlCheck() {
-  const p = usePanel();
-  const [url, setUrl] = useState('');
-  const submit = (e) => {
-    e.preventDefault();
-    p.run(async () => postJson('/api/chain/url', { url }));
-  };
-  const r = p.result;
-  return (
-    <form onSubmit={submit}>
-      <p className="desc">Connect to a live server, retrieve the certificate chain it presents, and check whether it is complete and trusted.</p>
-      <TextField label="URL or host" value={url} onChange={setUrl}
-        placeholder="example.com  ·  https://example.com  ·  host:8443" required />
-      <SubmitButton busy={p.busy}>Check server</SubmitButton>
-      <ErrorBox error={p.error} />
-      {r && (
-        <div className="chain-report">
-          <div className={'chain-status ' + (r.complete ? 'ok' : 'bad')}>
-            {r.complete
-              ? `✔ ${r.host}:${r.port} — chain is complete and trusted`
-              : `✘ ${r.host}:${r.port} — chain problem detected`}
-          </div>
-          <p className="note">
-            {r.protocol && <>Protocol: <b>{r.protocol}</b>&nbsp;&nbsp;</>}
-            {r.cipher && <>Cipher: <b>{r.cipher}</b>&nbsp;&nbsp;</>}
-            {r.verifyCode !== null && <>openssl verify: <b>{r.verifyCode} ({r.verifyText})</b></>}
-          </p>
-          <ol className="chain-list">
-            {r.chain.map((c, i) => (
-              <li key={i}>
-                <div className="c-subj">{c.subject}{c.selfSigned ? '  · self-signed (root)' : ''}</div>
-                <div className="c-meta">Issuer: {c.issuer}</div>
-                <div className="c-meta">Valid: {c.notBefore} → {c.notAfter}</div>
-              </li>
-            ))}
-          </ol>
-          {r.issues?.length > 0 && (
-            <div className="issues">{r.issues.map((x, i) => <div key={i} className="issue">⚠ {x}</div>)}</div>
-          )}
-        </div>
-      )}
-    </form>
-  );
-}
-
-/* ---------------- Inspect certificate ---------------- */
 export function Inspect() {
   const p = usePanel();
+
   const submit = (e) => {
     e.preventDefault();
     p.run(async () => {
@@ -307,59 +418,19 @@ export function Inspect() {
       return postForm('/api/inspect', fd);
     });
   };
-  return (
-    <form onSubmit={submit}>
-      <p className="desc">Decode and display the full details of a certificate (PEM or DER).</p>
-      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required />
-      <SubmitButton busy={p.busy}>Inspect</SubmitButton>
-      <ErrorBox error={p.error} />
-      {p.result?.text && <div className="log"><h4>Certificate details</h4><pre>{p.result.text}</pre></div>}
-    </form>
-  );
-}
 
-/* ---------------- CSR generation ---------------- */
-export function CsrGenerate() {
-  const p = usePanel();
-  const [f, setF] = useState({
-    commonName: '', organization: '', organizationalUnit: '', locality: '',
-    state: '', country: '', email: '', sans: '', keyType: 'rsa2048', keyPassword: '',
-  });
-  const upd = (k) => (v) => setF((prev) => ({ ...prev, [k]: v }));
-  const submit = (e) => {
-    e.preventDefault();
-    p.run(async () => postJson('/api/csr/generate', { ...f, sans: f.sans }));
-  };
   return (
-    <form onSubmit={submit}>
-      <p className="desc">Generate a new private key and Certificate Signing Request (CSR).</p>
-      <TextField label="Common Name (CN)" value={f.commonName} onChange={upd('commonName')}
-        placeholder="example.com" required />
-      <TextField label="Subject Alternative Names (SAN)" value={f.sans} onChange={upd('sans')}
-        placeholder="www.example.com, api.example.com, 10.0.0.1"
-        hint="Comma or space separated. DNS names and IPs are auto-detected." />
-      <div className="grid2">
-        <TextField label="Organization (O)" value={f.organization} onChange={upd('organization')} />
-        <TextField label="Organizational Unit (OU)" value={f.organizationalUnit} onChange={upd('organizationalUnit')} />
-        <TextField label="Locality / City (L)" value={f.locality} onChange={upd('locality')} />
-        <TextField label="State / Province (ST)" value={f.state} onChange={upd('state')} />
-        <TextField label="Country (C)" value={f.country} onChange={upd('country')} placeholder="US" />
-        <TextField label="Email" value={f.email} onChange={upd('email')} />
-      </div>
-      <SelectField label="Key type" value={f.keyType} onChange={upd('keyType')}
-        options={[
-          { value: 'rsa2048', label: 'RSA 2048' },
-          { value: 'rsa4096', label: 'RSA 4096' },
-          { value: 'ecp256', label: 'EC P-256' },
-          { value: 'ecp384', label: 'EC P-384' },
-        ]} />
-      <TextField label="Key password (optional)" type="password" value={f.keyPassword} onChange={upd('keyPassword')}
-        hint="Leave empty for an unencrypted key." />
-      <SubmitButton busy={p.busy}>Generate CSR</SubmitButton>
-      <ErrorBox error={p.error} />
-      <ResultFiles files={p.result?.files} />
-      {p.result?.csrText && <div className="log"><h4>CSR details</h4><pre>{p.result.csrText}</pre></div>}
-      <Log lines={p.result?.log} />
+    <form className="form" onSubmit={submit}>
+      <FileInput label="Certificate" name="cert" accept=".pem,.crt,.cer,.der" files={p.files} setFiles={p.setFiles} required
+        hint="PEM or DER. Use this to find out what an unlabelled file actually contains." />
+      <Actions busy={p.busy} disabled={!p.files.cert} need="a certificate">Decode it</Actions>
+      <ErrorBox error={p.error} fix="If OpenSSL cannot parse the file, it may be a PKCS#12 bundle or a private key rather than a certificate." />
+      {p.result?.text && (
+        <section className="out">
+          <OutHead>Certificate contents</OutHead>
+          <Plate text={p.result.text} />
+        </section>
+      )}
     </form>
   );
 }

@@ -7,10 +7,10 @@ A self-hosted, Dockerized web app for common X.509 / OpenSSL certificate tasks. 
 | Tool | What it does |
 |------|--------------|
 | **PFX → Key + Cert** | Extract certificate and private key from a `.pfx` / `.p12`, optionally stripping the key passphrase (`server.key`). |
-| **Key + Cert → PFX** | Merge a private key + certificate (+ optional chain) into a `.pfx`, with `-legacy` support for old Windows/IIS imports. |
-| **Merge cert + chain** | Combine a certificate with its intermediate(s) into one `fullchain.pem`, auto-ordered leaf → root. No private key needed; PEM or DER in. |
+| **Key + Cert → PFX** | Merge a private key + certificate (+ optional chain) into a `.pfx`, with `-legacy` support for old Windows/IIS imports. Intermediates may be uploaded as several separate files. |
+| **Merge cert + chain** | Combine a certificate with its intermediate(s) into one `fullchain.pem`, auto-ordered leaf → root. No private key needed; PEM or DER in, and the intermediate and root may be separate files. |
 | **PEM ⇄ DER** | Convert certificates between PEM and DER (CER/CRT/DER/PEM). Input format auto-detected. |
-| **Chain check (file)** | Detect whether a certificate chain is complete, ordered leaf → root, and flag missing intermediates. |
+| **Chain check (file)** | Detect whether a certificate chain is complete, ordered leaf → root, and flag missing intermediates. Accepts the CA certificates as one bundle or as separate files. |
 | **Chain check (URL)** | Connect to a live server, fetch the chain it presents, and report whether it is complete and trusted (catches missing-intermediate misconfigurations, expiry, etc.). |
 | **Generate CSR** | Create a new private key + CSR with SAN, RSA/EC key options. |
 | **Remove key passphrase** | Strip the passphrase from an encrypted private key. |
